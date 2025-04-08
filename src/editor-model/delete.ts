@@ -469,102 +469,22 @@ export function deleteRange(
   range: Range,
   type: ContentChangeType
 ): boolean {
-  const result = model.getAtoms(range);
-  if (result.length > 0 && result[0].parent) {
-    //
-    //  multiline environment (`\displaylines`, `multline`, `split`, `gather`, etc...)
-    //
-    let parent: Atom | undefined = result[0];
-    while (parent && !(parent instanceof ArrayAtom)) parent = parent.parent;
-
-    let endArray: Atom | undefined = result[result.length - 1];
-    while (endArray && !(endArray instanceof ArrayAtom))
-      endArray = endArray.parent;
-    if (parent && parent instanceof ArrayAtom) {
-      const parentArray = parent;
-      if (parentArray && endArray === parentArray && parentArray.isMultiline) {
-        // Calculate how many rows the selection spans
-        const [startOffset, endOffset] = [
-          Math.min(model.position, model.anchor),
-          Math.max(model.position, model.anchor),
-        ];
-        const [startRow, startColumn] = model.at(startOffset).parentBranch! as [
-          number,
-          number,
-        ];
-        const [endRow, endColumn] = model.at(endOffset).parentBranch! as [
-          number,
-          number,
-        ];
-        const rowSpan = endRow - startRow + 1;
-
-        if (rowSpan === 2) {
-          // // If the selection spans two rows, delete the entire row
-          // parentArray.removeRow(startRow);
-          // model.position = model.offsetOf(parentArray.getCell(startRow, 0)!);
-          // return true;
-        }
-
-        if (rowSpan > 2) {
-          // More than two span: delete the selection, then rows in the middle
-          model.extractAtoms([startOffset, endOffset]);
-          for (let i = startRow + 1; i < endRow; i++) parentArray.removeRow(i);
-          model.position = startOffset;
-
-          return true;
-        }
+  const start = range[0];
+  const end = range[1];
+  let position = end;
+  let avoidEndlessLoop = 4;
+  while (position > start) {
+    model.position = position;
+    deleteBackward(model);
+    if (model.position === position) {
+      avoidEndlessLoop--;
+      if (avoidEndlessLoop === 0) {
+        break;
       }
     }
-    //
-    // Regular case (not multiline)
-    //
-    let firstChild = result[0].parent!.firstChild;
-    if (firstChild.type === 'first') firstChild = firstChild.rightSibling;
-    const lastChild = result[result.length - 1].parent!.lastChild;
-
-    let firstSelected = result[0];
-    if (firstSelected.type === 'first')
-      firstSelected = firstSelected.rightSibling;
-    const lastSelected = result[result.length - 1];
-
-    // If we're deleting all the children, also delete the parent
-    // (for example for surd/\sqrt)
-    if (firstSelected === firstChild && lastSelected === lastChild) {
-      const parent = result[0].parent!;
-      if (parent.parent && parent.type !== 'prompt')
-        range = [model.offsetOf(parent.leftSibling), model.offsetOf(parent)];
-    }
-
-    // If we have a placeholder denominator selected,
-    // hoist the denominator
-    if (
-      result.length === 1 &&
-      result[0].type === 'placeholder' &&
-      result[0].parent.type === 'genfrac'
-    ) {
-      const genfrac = result[0].parent!;
-      const branch = result[0].parentBranch === 'below' ? 'above' : 'below';
-      const pos = model.offsetOf(genfrac.leftSibling);
-      return model.deferNotifications(
-        { content: true, selection: true, type },
-        () => {
-          const numer = genfrac.removeBranch(branch);
-          if (!(numer.length === 1 && numer[0].type === 'placeholder')) {
-            const lastAtom = genfrac.parent!.addChildrenAfter(numer, genfrac);
-            genfrac.parent?.removeChild(genfrac);
-            model.position = model.offsetOf(lastAtom);
-          } else {
-            genfrac.parent?.removeChild(genfrac);
-            model.position = Math.max(0, pos);
-          }
-        }
-      );
-    }
+    position = model.position;
   }
-  return model.deferNotifications(
-    { content: true, selection: true, type },
-    () => model.deleteAtoms(range)
-  );
+  return true;
 }
 
 function deleteRow(
